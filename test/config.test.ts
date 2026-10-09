@@ -19,6 +19,14 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ MAX_TRANSIT_HOURS: 'abc' })).toThrow();
   });
 
+  it('refuses timer values that Node cannot honour', () => {
+    expect(() => loadConfig({ POLL_INTERVAL_MS: '2592000000' })).toThrow(/POLL_INTERVAL_MS/);
+    expect(() => loadConfig({ POLL_INTERVAL_MS: '1.5' })).toThrow(/integer/);
+    expect(() => loadConfig({ AGGREGATOR_TIMEOUT_MS: '5000.5' })).toThrow(/AGGREGATOR_TIMEOUT_MS/);
+    expect(() => loadConfig({ CONTENT_DAYS_AFTER_DELIVERY: '1e9' })).toThrow(/CONTENT_DAYS_AFTER_DELIVERY/);
+    expect(loadConfig({ POLL_INTERVAL_MS: '0' }).pollIntervalMs).toBe(0);
+  });
+
   it('ignores a blank per-carrier override instead of reading it as zero hours', () => {
     const c = loadConfig({ MAX_TRANSIT_HOURS_CORREIOS: '', MAX_TRANSIT_HOURS_: '5' });
     expect(limitFor(c, 'correios')).toBe(120);
