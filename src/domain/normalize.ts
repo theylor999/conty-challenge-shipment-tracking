@@ -63,7 +63,7 @@ export function normalizeKey(raw: string): string {
 }
 
 // Only the carrier's status code is read. The description is never used to guess
-// a status: "Objeto não entregue" and "Entrega não efetuada" both contain "entregue".
+// a status: "Objeto não entregue" contains "entregue".
 // Bare-code fallback (CODE for CODE/SUBCODE) can never produce delivered.
 export function normalizeStatus(carrier: string, rawStatus: string): Status {
   const table = TABLES[carrier.trim().toLowerCase()];

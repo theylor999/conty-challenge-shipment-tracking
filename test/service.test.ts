@@ -154,7 +154,7 @@ describe('status and history', () => {
     expect((await ctx.service.refresh(id)).shipment.status).toBe('unknown');
   });
 
-  it('re-mapping applies to history already stored (status is derived, not persisted)', async () => {
+  it('classifies by carrier code when read: a known subcode is an exception, a new one stays unknown', async () => {
     provider.events = [ev({ raw_status: 'BDE/04', occurred_at: at(3), external_id: 'a' }), ev({ raw_status: 'BDE/77', occurred_at: at(4), external_id: 'b' })];
     const view = (await ctx.service.refresh(id)).shipment;
     expect(view.history!.map((h) => h.status)).toEqual(['exception', 'unknown']);

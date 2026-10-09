@@ -2,14 +2,14 @@
 
 API que registra um código de rastreio num agregador (fictício, "RastroHub"), consulta os eventos, traduz o dialeto de cada transportadora para seis status estáveis e avisa quando o pacote passa do prazo de trânsito. Quando o pacote é entregue, devolve `content_due_at`: a data-limite do conteúdo do criador, contada a partir da entrega (entrega + `CONTENT_DAYS_AFTER_DELIVERY`).
 
-Node 22.12+, TypeScript estrito, Hono, `node:sqlite`, vitest.
+Node 22.13+ (a partir dele o `node:sqlite` roda sem flag), TypeScript estrito, Hono, vitest.
 
 ## Como rodar
 
 ```bash
 npm install
 npm run dev        # API em :3000 + agregador falso em :4001, banco em memória
-npm test           # 104 testes
+npm test           # 106 testes
 npm run typecheck
 ```
 
@@ -21,7 +21,7 @@ npm run typecheck
 | `MAX_TRANSIT_HOURS_<TRANSPORTADORA>` | | limite só dessa transportadora, ex. `MAX_TRANSIT_HOURS_JADLOG=72` |
 | `CONTENT_DAYS_AFTER_DELIVERY` | `7` | dias de conteúdo depois da entrega (dias de 24h) |
 | `POLL_INTERVAL_MS` | `900000` | intervalo da varredura que consulta os não entregues e confere atraso; `0` desliga |
-| `PROVIDER` | `rastrohub` | `rastrohub` ou `parcelnet`; outro valor falha na partida |
+| `PROVIDER` | `rastrohub` | `rastrohub` ou `parcelnet`; em `npm start`, outro valor falha na partida |
 | `AGGREGATOR_URL`, `AGGREGATOR_API_KEY`, `AGGREGATOR_TIMEOUT_MS` | `http://localhost:4001`, `dev-key`, `5000` | acesso ao agregador |
 | `WEBHOOK_TOKEN` | vazio | liga `POST /webhooks/aggregator`; sem token, ou com um agregador sem suporte a webhook (`parcelnet`), a rota não existe |
 | `DB_PATH`, `PORT` | `tracking.db`, `3000` | |
@@ -78,9 +78,9 @@ O horário vem com offset (`-03:00`) e é guardado em UTC. `ZZ7` é um código q
 
 As tabelas estão em `src/domain/normalize.ts`. Decisões:
 
-- O código da transportadora é a única fonte. A descrição nunca é lida para adivinhar status: "não entregue" e "entrega não efetuada" contêm "entregue". Sem heurística de texto.
+- O código da transportadora é a única fonte. A descrição nunca é lida para adivinhar status: "Objeto não entregue" contém "entregue". Sem heurística de texto.
 - Correios reusa `BDE` com subcódigos. Só `BDE/01` (e `BDI/01`, `BDR/01`) é entregue; `BDE/02` é destinatário ausente. `BDE` sem subcódigo, ou com subcódigo novo, é `unknown`. O retorno ao código sem subcódigo (`RO/01` vira `RO`) nunca produz `delivered`.
-- Maiúsculas, acentos e separadores são ignorados (`Saiu para entrega` = `SAIU_PARA_ENTREGA`).
+- Maiúsculas, acentos e a diferença entre espaço, `_` e `-` são ignorados (`Saiu para entrega` = `SAIU_PARA_ENTREGA`).
 - O status normalizado não é gravado. O banco guarda o texto cru e o status é calculado na leitura, então acrescentar um mapeamento corrige eventos já ingeridos.
 - Shipment sem nenhum evento reconhecido tem status `unknown`.
 
@@ -93,7 +93,7 @@ O status é função do conjunto de eventos, não do último recebido.
 3. Se existe algum `delivered`, o status é `delivered` e é terminal: nada depois dele muda o status, nem uma exceção posterior. `delivered_at` é o menor instante entre os eventos de entrega.
 4. Senão, vale o último evento da ordenação. Logo uma exceção mais nova que o último progresso aparece como `exception`, até chegar um progresso mais novo.
 
-Evento antigo que chega tarde entra no histórico, mas não é o último, então não muda o status. Se o relógio da transportadora estiver errado, vale o horário dela: não há como saber melhor.
+Evento antigo que chega tarde entra no histórico, mas não é o último, então não muda o status. A exceção é um `delivered` mais antigo: ele só antecipa `delivered_at`, e vale mesmo contra uma exceção mais nova (regra 3). Se o relógio da transportadora estiver errado, vale o horário dela: não há como saber melhor.
 
 Repetição: a identidade do evento é o `id` do agregador, ou, sem id, o hash de (código, transportadora, status cru, instante em UTC, local). Há `UNIQUE (shipment_id, dedup_key)` no banco. Consultar de novo não duplica; a resposta traz `inserted` e `duplicates`. Se o mesmo `id` voltar com conteúdo diferente, vale o primeiro.
 
@@ -125,8 +125,8 @@ Repetição: a identidade do evento é o `id` do agregador, ou, sem id, o hash d
 Transportadoras aceitas: `correios`, `jadlog`, `loggi`. Código Correios: `AA123456789BR`.
 
 ```bash
-curl -s -X POST localhost:3000/shipments -H 'content-type: application/json' \
-  -d '{"code":"AA123456789BR","carrier":"correios","campaign_id":"camp-42"}'
+ID=$(curl -s -X POST localhost:3000/shipments -H 'content-type: application/json' \
+  -d '{"code":"AA123456789BR","carrier":"correios","campaign_id":"camp-42"}' | sed -E 's/.*"id":"([^"]+)".*/\1/')
 
 # simula o agregador entregando fora de ordem, com repetição e um código inventado
 curl -s -X POST localhost:4001/_sim/trackings/AA123456789BR/checkpoints -H 'content-type: application/json' \
@@ -148,7 +148,7 @@ Na execução real o segundo `refresh` devolveu `{"fetched":4,"inserted":0,"dupl
 
 ## Como trocar o agregador
 
-O resto do código só conhece `TrackingProvider` (`src/provider/provider.ts`): `register(code, carrier)` e `fetchEvents(code)` devolvendo `CarrierEvent`, mais `parseWebhook` opcional. O formato do RastroHub fica em `src/provider/rastrohub/` (cliente HTTP e `mapper.ts`). Trocar = escrever outra pasta de adaptador e acrescentar um `case` em `src/provider/factory.ts`. Ninguém mais muda.
+O resto do código só conhece `TrackingProvider` (`src/provider/provider.ts`): `register(code, carrier)` (sem retorno), `fetchEvents(code)` (devolve uma lista de `CarrierEvent`) e `parseWebhook` opcional. O formato do RastroHub fica em `src/provider/rastrohub/` (cliente HTTP e `mapper.ts`). Trocar = escrever outra pasta de adaptador e acrescentar um `case` em `src/provider/factory.ts`. Ninguém mais muda.
 
 Há um segundo adaptador, `src/provider/parcelnet/`, com dialeto diferente (eventos planos, epoch em segundos, código dividido em dois campos). O teste `test/provider/parcelnet.test.ts` roda o mesmo serviço com ele e obtém o mesmo status. Escolha com `PROVIDER=parcelnet`; ele não tem agregador falso, só teste com `fetch` simulado.
 
@@ -175,10 +175,11 @@ src/http/app.ts      rotas Hono
 - Mapeamento de códigos reais das transportadoras: as tabelas cobrem os casos da proposta, não o catálogo completo.
 - Prazo de conteúdo por campanha: usa uma configuração global.
 - Migrações: o esquema é criado na abertura do banco.
+- Entregue com início conhecido não volta para a varredura: um evento antigo que só apareça depois (um `posted` anterior, ou uma entrega anterior à registrada) entra por webhook ou `POST /shipments/:id/refresh`, não pela varredura.
 
 ## Testes
 
-`npm test`: 104 testes, relógio controlado (`ManualClock`) onde o tempo importa.
+`npm test`: 106 testes, relógio controlado (`ManualClock`) onde o tempo importa.
 
 - fora de ordem: entregue e depois chega um `in_transit` antigo, status continua entregue
 - status inventado: `unknown`, não entrega, listado em `unmapped_events`
