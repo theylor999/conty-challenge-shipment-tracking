@@ -21,4 +21,12 @@ describe('dedupKey', () => {
     expect(dedupKey(CODE, base)).not.toBe(dedupKey(CODE, { ...base, location: 'B' }));
     expect(dedupKey(CODE, base)).not.toBe(dedupKey(CODE, { ...base, occurred_at: new Date(base.occurred_at.getTime() + 1) }));
   });
+
+  it('does not merge events whose fields contain the separator character', () => {
+    const t1 = new Date('2026-03-01T10:00:00Z');
+    const t2 = new Date('2026-03-02T10:00:00Z');
+    const a = ev({ raw_status: 'RO', occurred_at: t1, location: `${t2.toISOString()}\u0000X` });
+    const b = ev({ raw_status: `RO\u0000${t1.toISOString()}`, occurred_at: t2, location: 'X' });
+    expect(dedupKey(CODE, a)).not.toBe(dedupKey(CODE, b));
+  });
 });

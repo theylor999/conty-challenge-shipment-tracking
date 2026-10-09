@@ -12,5 +12,5 @@ export function dedupKey(code: string, event: CarrierEvent): string {
     event.occurred_at.toISOString(),
     event.location ?? '',
   ].map((p) => p.trim().toLowerCase());
-  return `h:${createHash('sha256').update(parts.join('\u0000')).digest('hex')}`;
+  return `h:${createHash('sha256').update(JSON.stringify(parts)).digest('hex')}`;
 }
