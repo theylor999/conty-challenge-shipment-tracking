@@ -74,6 +74,7 @@ describe('rastrohub mapper, malformed fields', () => {
   it('rejects ids and messages of the wrong type', () => {
     expect(() => parseTracking(withCheckpoint({ id: { a: 1 } }))).toThrow(/id/);
     expect(() => parseTracking(withCheckpoint({ message: 5 }))).toThrow(/message/);
+    expect(() => parseTracking(withCheckpoint({ location: { city: 7, state: 'SP' } }))).toThrow(/location/);
   });
 });
 

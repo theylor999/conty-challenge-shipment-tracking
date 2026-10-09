@@ -19,6 +19,9 @@ function mapLocation(value: unknown): string | null {
   if (value == null) return null;
   if (typeof value === 'string') return value.trim() || null;
   if (isRecord(value)) {
+    for (const part of [value.city, value.state]) {
+      if (part != null && typeof part !== 'string') return invalid('location.city and location.state must be strings');
+    }
     const parts = [value.city, value.state].filter((p): p is string => typeof p === 'string' && p.trim() !== '');
     return parts.length ? parts.map((p) => p.trim()).join('/') : null;
   }

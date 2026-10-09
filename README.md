@@ -2,14 +2,14 @@
 
 API que registra um código de rastreio num agregador (fictício, "RastroHub"), consulta os eventos, traduz o dialeto de cada transportadora para seis status estáveis e avisa quando o pacote passa do prazo de trânsito. Quando o pacote é entregue, devolve `content_due_at`: a data-limite do conteúdo do criador, contada a partir da entrega (entrega + `CONTENT_DAYS_AFTER_DELIVERY`).
 
-Node 22+, TypeScript estrito, Hono, `node:sqlite`, vitest.
+Node 22.12+, TypeScript estrito, Hono, `node:sqlite`, vitest.
 
 ## Como rodar
 
 ```bash
 npm install
 npm run dev        # API em :3000 + agregador falso em :4001, banco em memória
-npm test           # 102 testes
+npm test           # 104 testes
 npm run typecheck
 ```
 
@@ -23,7 +23,7 @@ npm run typecheck
 | `POLL_INTERVAL_MS` | `900000` | intervalo da varredura que consulta os não entregues e confere atraso; `0` desliga |
 | `PROVIDER` | `rastrohub` | `rastrohub` ou `parcelnet`; outro valor falha na partida |
 | `AGGREGATOR_URL`, `AGGREGATOR_API_KEY`, `AGGREGATOR_TIMEOUT_MS` | `http://localhost:4001`, `dev-key`, `5000` | acesso ao agregador |
-| `WEBHOOK_TOKEN` | vazio | liga `POST /webhooks/aggregator`; sem token a rota não existe |
+| `WEBHOOK_TOKEN` | vazio | liga `POST /webhooks/aggregator`; sem token, ou com um agregador sem suporte a webhook (`parcelnet`), a rota não existe |
 | `DB_PATH`, `PORT` | `tracking.db`, `3000` | |
 
 ## Do payload cru ao status normalizado
@@ -108,7 +108,7 @@ Repetição: a identidade do evento é o `id` do agregador, ou, sem id, o hash d
   "alert": { "raised_at": "2026-10-09T15:28:05.015Z", "cleared_at": "2026-10-09T15:28:05.121Z" } } }
 ```
 
-- Alerta: uma linha por shipment (`delay_alerts`). Sai uma vez (callback `onDelayAlert`; o servidor registra no log). É avaliado a cada ingestão (refresh, webhook) e na varredura periódica, inclusive quando o agregador está fora do ar. A varredura não consulta mais um shipment entregue, exceto se o histórico dele não tem `posted`/`in_transit`: o início ainda pode chegar, e sem ele o atraso seria medido da própria entrega. Se depois se descobre que não houve atraso (caso acima), a linha ganha `cleared_at`; se voltar a atrasar, é reaberta sem novo aviso.
+- Alerta: uma linha por shipment (`delay_alerts`). Sai uma vez (callback `onDelayAlert`; o servidor registra no log). É avaliado a cada ingestão (refresh, webhook) e na varredura periódica, inclusive quando o agregador está fora do ar ou devolve um lote recusado. A varredura não consulta mais um shipment entregue, exceto se o histórico dele não tem `posted`/`in_transit`: o início ainda pode chegar, e sem ele o atraso é medido do primeiro evento de progresso que existir (no pior caso, a própria entrega). Entregues com início conhecido não são consultados, mas o alerta deles é reavaliado, para o caso de o limite ter mudado. Se depois se descobre que não houve atraso (caso acima), a linha ganha `cleared_at`; se voltar a atrasar, é reaberta sem novo aviso.
 - `GET /shipments?late=true` calcula com o relógio atual, sem esperar a varredura.
 - Limite por transportadora: `MAX_TRANSIT_HOURS_JADLOG=72`.
 
@@ -152,7 +152,7 @@ O resto do código só conhece `TrackingProvider` (`src/provider/provider.ts`): 
 
 Há um segundo adaptador, `src/provider/parcelnet/`, com dialeto diferente (eventos planos, epoch em segundos, código dividido em dois campos). O teste `test/provider/parcelnet.test.ts` roda o mesmo serviço com ele e obtém o mesmo status. Escolha com `PROVIDER=parcelnet`; ele não tem agregador falso, só teste com `fetch` simulado.
 
-Erros e respostas malformadas do agregador viram `ProviderError` com um `kind`; o formato dele não vaza para domínio, banco ou API. Cada adaptador confere que a resposta é do código pedido, e o serviço recusa o lote inteiro se algum evento vier de outra transportadora que não a registrada (um `ENTREGUE` da Loggi não entrega um pacote dos Correios). Campos presentes com tipo errado (por exemplo `subtag: 99`) são recusados em vez de descartados, porque descartar poderia transformar um código desconhecido em entregue.
+Erros e respostas malformadas do agregador viram `ProviderError` com um `kind`; o formato dele não vaza para domínio, banco ou API. Cada adaptador confere que a resposta é do código pedido, e o serviço recusa o lote inteiro se algum evento vier de outra transportadora que não a registrada (um `ENTREGUE` da Loggi não entrega um pacote dos Correios). Campos validados (`subtag`, `id`, `message`, `location`) com tipo errado (por exemplo `subtag: 99`) são recusados em vez de descartados, porque descartar poderia transformar um código desconhecido em entregue.
 
 Estrutura:
 
@@ -178,7 +178,7 @@ src/http/app.ts      rotas Hono
 
 ## Testes
 
-`npm test`: 102 testes, relógio controlado (`ManualClock`) onde o tempo importa.
+`npm test`: 104 testes, relógio controlado (`ManualClock`) onde o tempo importa.
 
 - fora de ordem: entregue e depois chega um `in_transit` antigo, status continua entregue
 - status inventado: `unknown`, não entrega, listado em `unmapped_events`

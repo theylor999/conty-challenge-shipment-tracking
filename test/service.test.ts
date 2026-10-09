@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { openDb } from '../src/db.ts';
 import { ProviderError } from '../src/provider/provider.ts';
-import { at, CODE, ev, makeApp, StubProvider, T0 } from './helpers/index.ts';
+import { Repository } from '../src/repository.ts';
+import { ShipmentService } from '../src/service.ts';
+import { at, CODE, ev, ManualClock, makeApp, StubProvider, T0, testConfig } from './helpers/index.ts';
 
 let provider: StubProvider;
 let ctx: ReturnType<typeof makeApp>;
@@ -64,6 +67,41 @@ describe('registration races and identity', () => {
     provider.events = [ev({ raw_status: 'ENTREGUE', carrier: 'loggi', occurred_at: at(5) })];
     await expect(ctx.service.refresh(id)).rejects.toMatchObject({ kind: 'invalid_response' });
     expect(ctx.service.get(id)).toMatchObject({ status: 'unknown', history: [] });
+  });
+});
+
+describe('alerts when ingestion is rejected or the limit changes', () => {
+  it('still raises the overdue alert when the batch is rejected for a carrier mismatch', async () => {
+    await setup();
+    provider.events = [posted(0)];
+    await ctx.service.refresh(id);
+    provider.events = [ev({ raw_status: 'ENTREGUE', carrier: 'loggi', occurred_at: at(5) })];
+    ctx.clock.set(at(121));
+    expect(await ctx.service.scan()).toEqual({ checked: 1, failed: 1 });
+    expect(ctx.alerts).toHaveLength(1);
+  });
+
+  it('scan reconciles the alert of a delivered shipment after the limit is changed', async () => {
+    const repo = new Repository(openDb());
+    const clock = new ManualClock(at(200));
+    const alerts: unknown[] = [];
+    const stub = new StubProvider();
+    const build = (limit: string) =>
+      new ShipmentService({ repo, provider: stub, clock, config: testConfig({ MAX_TRANSIT_HOURS: limit }), onDelayAlert: (n) => alerts.push(n) });
+
+    const loose = build('120');
+    const shipment = (await loose.register({ code: CODE, carrier: 'correios' })).shipment;
+    stub.events = [posted(0), delivered(50)];
+    await loose.refresh(shipment.id);
+    expect(alerts).toHaveLength(0);
+
+    const strict = build('24');
+    await strict.scan();
+    expect(strict.get(shipment.id).delay).toMatchObject({ late: true, alert: { cleared_at: null } });
+    expect(alerts).toHaveLength(1);
+
+    await loose.scan();
+    expect(loose.get(shipment.id).delay).toMatchObject({ late: false, alert: { cleared_at: expect.any(String) } });
   });
 });
 

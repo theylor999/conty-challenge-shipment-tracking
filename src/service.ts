@@ -137,21 +137,26 @@ export class ShipmentService {
 
   async refresh(id: string): Promise<{ shipment: ShipmentView; refresh: RefreshSummary }> {
     const shipment = this.require(id);
-    let events: CarrierEvent[];
     try {
-      events = await this.deps.provider.fetchEvents(shipment.code);
+      const events = await this.deps.provider.fetchEvents(shipment.code);
+      const refresh = this.ingest(shipment, events);
+      return { shipment: this.view(shipment, true), refresh };
     } catch (err) {
-      // An unreachable aggregator must not hide a package that is already late.
-      this.syncAlert(shipment);
+      // An unreachable or inconsistent aggregator must not hide a package that is already late.
+      if (err instanceof ProviderError) this.syncAlert(shipment);
       throw err;
     }
-    const refresh = this.ingest(shipment, events);
-    return { shipment: this.view(shipment, true), refresh };
   }
 
   ingestWebhook(code: string, events: CarrierEvent[]): RefreshSummary | null {
     const shipment = this.deps.repo.findShipmentByCode(code.trim().toUpperCase());
-    return shipment ? this.ingest(shipment, events) : null;
+    if (!shipment) return null;
+    try {
+      return this.ingest(shipment, events);
+    } catch (err) {
+      if (err instanceof ProviderError) this.syncAlert(shipment);
+      throw err;
+    }
   }
 
   // Poll every shipment that is not delivered, then re-check delay with the current clock.
@@ -162,7 +167,10 @@ export class ShipmentService {
     let failed = 0;
     for (const shipment of this.deps.repo.listShipments()) {
       const { status, hasStart } = this.analyze(shipment);
-      if (status === 'delivered' && hasStart) continue;
+      if (status === 'delivered' && hasStart) {
+        this.syncAlert(shipment); // no fetch, but a changed limit may flip late
+        continue;
+      }
       checked += 1;
       try {
         await this.refresh(shipment.id);
