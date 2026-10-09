@@ -190,7 +190,7 @@ src/http/app.ts      rotas Hono
 
 ## Uso de IA
 
-Escrevi o código e os testes com um assistente de código (Claude) que eu dirigi. Eu revisei e ajustei:
+O código e os testes foram escritos com um assistente de IA (Claude), que eu dirigi. Eu revisei e ajustei:
 
 - A tabela de Correios: `BDE`, `BDI` e `BDR` só viram entregue com subcódigo `01`. Subcódigos de "destinatário ausente" viram exceção e `BDE` solto vira `unknown`.
 - O parse de data do agregador: confirmei que `Date.parse("2026-02-31T10:00:00Z")` rola para março em vez de falhar, e por isso a validação do calendário e a recusa de horário sem offset ficam em `src/provider/time.ts`.
