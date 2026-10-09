@@ -39,14 +39,19 @@ export function parseTracking(payload: unknown): { code: string; carrier: string
     const occurred_at = parseIsoWithOffset(cp.checkpoint_time);
     if (!occurred_at) return invalid(`checkpoints[${i}].checkpoint_time must be ISO-8601 with offset`);
 
-    const subtag = typeof cp.subtag === 'string' && cp.subtag.trim() ? cp.subtag.trim() : null;
-    const id = typeof cp.id === 'string' || typeof cp.id === 'number' ? String(cp.id) : undefined;
+    // A subtag that is present but not a string is malformed; dropping it would turn
+    // e.g. ENTREGUE/99 into a plain ENTREGUE.
+    if (cp.subtag != null && typeof cp.subtag !== 'string') return invalid(`checkpoints[${i}].subtag must be a string`);
+    if (cp.id != null && typeof cp.id !== 'string' && typeof cp.id !== 'number') return invalid(`checkpoints[${i}].id must be a string or number`);
+    if (cp.message != null && typeof cp.message !== 'string') return invalid(`checkpoints[${i}].message must be a string`);
+    const subtag = cp.subtag?.trim() || null;
+    const id = cp.id == null || cp.id === '' ? undefined : String(cp.id);
     return {
       ...(id ? { external_id: id } : {}),
       carrier,
       // Correios gives code + type (BDE + 01); the pair is the carrier's real status.
       raw_status: subtag ? `${cp.tag.trim()}/${subtag}` : cp.tag.trim(),
-      raw_description: typeof cp.message === 'string' ? cp.message : '',
+      raw_description: cp.message ?? '',
       occurred_at,
       location: mapLocation(cp.location),
     };

@@ -60,6 +60,23 @@ describe('rastrohub mapper', () => {
   });
 });
 
+describe('rastrohub mapper, malformed fields', () => {
+  const withCheckpoint = (cp: object) => ({
+    tracking: RAW.tracking,
+    checkpoints: [{ tag: 'ENTREGUE', checkpoint_time: '2026-03-02T10:00:00Z', ...cp }],
+  });
+
+  it('rejects a subtag that is present but not a string instead of dropping it', () => {
+    expect(() => parseTracking(withCheckpoint({ subtag: 99 }))).toThrow(/subtag/);
+    expect(() => parseTracking(withCheckpoint({ subtag: ['01'] }))).toThrow(/subtag/);
+  });
+
+  it('rejects ids and messages of the wrong type', () => {
+    expect(() => parseTracking(withCheckpoint({ id: { a: 1 } }))).toThrow(/id/);
+    expect(() => parseTracking(withCheckpoint({ message: 5 }))).toThrow(/message/);
+  });
+});
+
 describe('RastroHubClient over HTTP', () => {
   let agg: Awaited<ReturnType<typeof startFakeAggregator>>;
   let client: RastroHubClient;
@@ -100,8 +117,34 @@ describe('RastroHubClient over HTTP', () => {
   });
 
   it('turns a connection failure into unavailable', async () => {
-    const down = new RastroHubClient({ baseUrl: 'http://127.0.0.1:1', apiKey: 'x', timeoutMs: 1000 });
+    const closed = await startFakeAggregator();
+    await closed.close();
+    const down = new RastroHubClient({ baseUrl: closed.baseUrl, apiKey: 'x', timeoutMs: 1000 });
     await expect(down.fetchEvents('RB000000001BR')).rejects.toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('rejects an answer that belongs to another code', async () => {
+    const other = new RastroHubClient({
+      baseUrl: 'http://x',
+      apiKey: 'k',
+      fetch: async () => Response.json({ ...RAW, tracking: { number: 'BB123456789BR', carrier: 'correios' } }),
+    });
+    await expect(other.fetchEvents('AA123456789BR')).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('accepts an empty 204 as a successful registration', async () => {
+    const c = new RastroHubClient({ baseUrl: 'http://x', apiKey: 'k', fetch: async () => new Response(null, { status: 204 }) });
+    await expect(c.register('AA123456789BR', 'correios')).resolves.toBeUndefined();
+  });
+
+  it('a body that fails while being read is unavailable, not invalid JSON', async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.error(new Error('socket hang up'));
+      },
+    });
+    const c = new RastroHubClient({ baseUrl: 'http://x', apiKey: 'k', fetch: async () => new Response(stream, { status: 200 }) });
+    await expect(c.fetchEvents('AA123456789BR')).rejects.toMatchObject({ kind: 'unavailable' });
   });
 
   it('turns a non-JSON or malformed 200 into invalid_response', async () => {

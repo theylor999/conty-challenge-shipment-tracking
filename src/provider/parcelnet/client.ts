@@ -1,39 +1,40 @@
 import type { CarrierEvent } from '../../domain/types.ts';
+import { callJson } from '../http.ts';
 import { ProviderError, type TrackingProvider } from '../provider.ts';
 
-// Second, deliberately different dialect (flat events, epoch seconds, carrier code
-// split in two fields). It exists to show that swapping aggregators touches this
-// folder and provider/factory.ts only.
-interface ParcelNetPayload {
-  parcel: string;
-  carrier_slug: string;
-  events: Array<{
-    event_id?: string;
-    carrier_code: string;
-    carrier_subcode?: string;
-    text?: string;
-    epoch: number;
-    place?: string;
-  }>;
-}
+const invalid = (message: string): never => {
+  throw new ProviderError('invalid_response', `parcelnet: ${message}`);
+};
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
 
-export function mapParcelNet(payload: ParcelNetPayload): CarrierEvent[] {
-  if (!payload || !Array.isArray(payload.events) || typeof payload.carrier_slug !== 'string') {
-    throw new ProviderError('invalid_response', 'parcelnet: unexpected payload');
+// Dialect: { parcel, carrier_slug, events: [{ event_id?, carrier_code, carrier_subcode?, text?, epoch, place? }] }
+export function mapParcelNet(payload: unknown): { code: string; events: CarrierEvent[] } {
+  if (!isRecord(payload) || typeof payload.parcel !== 'string' || typeof payload.carrier_slug !== 'string' || !Array.isArray(payload.events)) {
+    return invalid('expected { parcel, carrier_slug, events }');
   }
-  return payload.events.map((e) => {
-    if (typeof e.carrier_code !== 'string' || !Number.isFinite(new Date(e.epoch * 1000).getTime())) {
-      throw new ProviderError('invalid_response', 'parcelnet: event without code or epoch');
-    }
+  const carrier = payload.carrier_slug;
+  const events = payload.events.map((e, i): CarrierEvent => {
+    if (!isRecord(e)) return invalid(`events[${i}] is not an object`);
+    if (typeof e.carrier_code !== 'string' || !e.carrier_code.trim()) return invalid(`events[${i}].carrier_code missing`);
+    if (e.carrier_subcode != null && typeof e.carrier_subcode !== 'string') return invalid(`events[${i}].carrier_subcode must be a string`);
+    if (e.event_id != null && typeof e.event_id !== 'string') return invalid(`events[${i}].event_id must be a string`);
+    if (e.text != null && typeof e.text !== 'string') return invalid(`events[${i}].text must be a string`);
+    if (e.place != null && typeof e.place !== 'string') return invalid(`events[${i}].place must be a string`);
+    const occurred_at = typeof e.epoch === 'number' ? new Date(e.epoch * 1000) : null;
+    if (!occurred_at || Number.isNaN(occurred_at.getTime())) return invalid(`events[${i}].epoch must be a number`);
+
+    const subcode = e.carrier_subcode?.trim();
     return {
       ...(e.event_id ? { external_id: e.event_id } : {}),
-      carrier: payload.carrier_slug,
-      raw_status: e.carrier_subcode ? `${e.carrier_code}/${e.carrier_subcode}` : e.carrier_code,
+      carrier,
+      raw_status: subcode ? `${e.carrier_code.trim()}/${subcode}` : e.carrier_code.trim(),
       raw_description: e.text ?? '',
-      occurred_at: new Date(e.epoch * 1000),
+      occurred_at,
       location: e.place ?? null,
     };
   });
+  return { code: payload.parcel, events };
 }
 
 export class ParcelNetClient implements TrackingProvider {
@@ -42,31 +43,27 @@ export class ParcelNetClient implements TrackingProvider {
   ) {}
 
   async register(code: string, carrier: string): Promise<void> {
-    await this.call('POST', '/parcels', { code, carrier_slug: carrier });
+    await this.call('POST', '/parcels', false, { code, carrier_slug: carrier });
   }
 
   async fetchEvents(code: string): Promise<CarrierEvent[]> {
-    return mapParcelNet((await this.call('GET', `/parcels/${encodeURIComponent(code)}/events`)) as ParcelNetPayload);
+    const parsed = mapParcelNet(await this.call('GET', `/parcels/${encodeURIComponent(code)}/events`, true));
+    if (parsed.code.toUpperCase() !== code.toUpperCase()) {
+      return invalid(`answered for ${parsed.code}, asked for ${code}`);
+    }
+    return parsed.events;
   }
 
-  private async call(method: string, path: string, body?: unknown): Promise<unknown> {
-    let res: Response;
-    try {
-      res = await (this.opts.fetch ?? fetch)(`${this.opts.baseUrl.replace(/\/+$/, '')}${path}`, {
-        method,
-        headers: { 'x-api-key': this.opts.apiKey, 'content-type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(this.opts.timeoutMs ?? 5000),
-      });
-    } catch (err) {
-      throw new ProviderError('unavailable', `parcelnet unreachable: ${(err as Error).message}`);
-    }
-    if (res.status === 404) throw new ProviderError('not_found', 'parcelnet does not know this code');
-    if (res.status === 401 || res.status === 403) throw new ProviderError('unauthorized', 'parcelnet rejected credentials');
-    if (res.status >= 500 || res.status === 429) throw new ProviderError('unavailable', `parcelnet answered ${res.status}`);
-    if (!res.ok) throw new ProviderError('rejected', `parcelnet answered ${res.status}`);
-    return res.json().catch(() => {
-      throw new ProviderError('invalid_response', 'parcelnet returned a body that is not JSON');
+  private call(method: string, path: string, readBody: boolean, body?: unknown) {
+    return callJson({
+      name: 'parcelnet',
+      fetch: this.opts.fetch ?? fetch,
+      url: `${this.opts.baseUrl.replace(/\/+$/, '')}${path}`,
+      method,
+      headers: { 'x-api-key': this.opts.apiKey },
+      body,
+      timeoutMs: this.opts.timeoutMs ?? 5000,
+      readBody,
     });
   }
 }

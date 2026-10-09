@@ -67,14 +67,14 @@ export function createApp({ service, provider, webhookToken }: AppDeps): Hono {
         return c.json({ error: { code: 'unauthorized', message: 'bad webhook token' } }, 401);
       }
       const body = await readJson(c);
-      let parsed: ReturnType<typeof parse>;
+      let refresh: ReturnType<typeof service.ingestWebhook>;
       try {
-        parsed = parse(body);
+        const parsed = parse(body);
+        refresh = service.ingestWebhook(parsed.code, parsed.events);
       } catch (err) {
         if (err instanceof ProviderError) throw new AppError('validation', err.message);
         throw err;
       }
-      const refresh = service.ingestWebhook(parsed.code, parsed.events);
       // 2xx for unknown codes: the aggregator would retry a 404 forever.
       return c.json(refresh ? { ...refresh, ignored: false } : { ignored: true }, 202);
     });

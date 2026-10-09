@@ -32,7 +32,6 @@ export function ev(over: Partial<CarrierEvent> & { raw_status: string }): Carrie
   };
 }
 
-// Returns whatever `events` holds at the time of the call, like an aggregator would.
 export class StubProvider implements TrackingProvider {
   events: CarrierEvent[] = [];
   registered: Array<[string, string]> = [];

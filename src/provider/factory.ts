@@ -10,5 +10,7 @@ export function createProvider(config: ProviderConfig): TrackingProvider {
       return new RastroHubClient(opts);
     case 'parcelnet':
       return new ParcelNetClient(opts);
+    default:
+      throw new Error(`unknown PROVIDER "${config.kind}" (expected rastrohub or parcelnet)`);
   }
 }

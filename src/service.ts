@@ -94,15 +94,15 @@ export class ShipmentService {
     }
 
     const existing = this.deps.repo.findShipmentByCode(code);
-    if (existing) {
-      if (existing.carrier !== carrier || (campaignId !== null && existing.campaign_id !== campaignId)) {
-        throw new AppError('conflict', 'code is already registered with another carrier or campaign');
-      }
-      return { shipment: this.view(existing, true), created: false };
-    }
+    if (existing) return this.alreadyRegistered(existing, carrier, campaignId);
 
     // Provider first: if it refuses, nothing is stored locally.
     await this.deps.provider.register(code, carrier);
+
+    // A concurrent request for the same code may have finished during the await above.
+    const raced = this.deps.repo.findShipmentByCode(code);
+    if (raced) return this.alreadyRegistered(raced, carrier, campaignId);
+
     const shipment: Shipment = {
       id: randomUUID(),
       code,
@@ -113,6 +113,17 @@ export class ShipmentService {
     };
     this.deps.repo.insertShipment(shipment);
     return { shipment: this.view(shipment, true), created: true };
+  }
+
+  private alreadyRegistered(
+    existing: Shipment,
+    carrier: string,
+    campaignId: string | null,
+  ): { shipment: ShipmentView; created: boolean } {
+    if (existing.carrier !== carrier || (campaignId !== null && existing.campaign_id !== campaignId)) {
+      throw new AppError('conflict', 'code is already registered with another carrier or campaign');
+    }
+    return { shipment: this.view(existing, true), created: false };
   }
 
   get(id: string): ShipmentView {
@@ -144,11 +155,14 @@ export class ShipmentService {
   }
 
   // Poll every shipment that is not delivered, then re-check delay with the current clock.
+  // A delivered shipment whose history has no posted/in_transit event is polled too: its
+  // start may still arrive, and without it the delay is measured from the delivery itself.
   async scan(): Promise<{ checked: number; failed: number }> {
     let checked = 0;
     let failed = 0;
     for (const shipment of this.deps.repo.listShipments()) {
-      if (this.analyze(shipment).status === 'delivered') continue;
+      const { status, hasStart } = this.analyze(shipment);
+      if (status === 'delivered' && hasStart) continue;
       checked += 1;
       try {
         await this.refresh(shipment.id);
@@ -167,6 +181,13 @@ export class ShipmentService {
   }
 
   private ingest(shipment: Shipment, events: CarrierEvent[]): RefreshSummary {
+    const foreign = events.find((e) => e.carrier.trim().toLowerCase() !== shipment.carrier);
+    if (foreign) {
+      throw new ProviderError(
+        'invalid_response',
+        `event for carrier "${foreign.carrier}" on a ${shipment.carrier} shipment`,
+      );
+    }
     const now = this.deps.clock.now();
     const items = events.map((event) => ({ key: dedupKey(shipment.code, event), event }));
     const { inserted, duplicates } = this.deps.repo.insertEvents(shipment.id, items, now);
@@ -188,7 +209,8 @@ export class ShipmentService {
       limitFor(this.deps.config, shipment.carrier),
       this.deps.clock.now(),
     );
-    return { classified, status, delivered_at, delay };
+    const hasStart = classified.some((e) => e.status === 'posted' || e.status === 'in_transit');
+    return { classified, status, delivered_at, delay, hasStart };
   }
 
   // Alert is one row per shipment: raised once, cleared when the shipment turns out

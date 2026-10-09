@@ -46,6 +46,27 @@ describe('registration', () => {
   });
 });
 
+describe('registration races and identity', () => {
+  it('two concurrent identical registrations give one shipment: 201 then 200 semantics', async () => {
+    provider = new StubProvider();
+    ctx = makeApp(provider);
+    const [a, b] = await Promise.all([
+      ctx.service.register({ code: CODE, carrier: 'correios' }),
+      ctx.service.register({ code: CODE, carrier: 'correios' }),
+    ]);
+    expect([a.created, b.created].sort()).toEqual([false, true]);
+    expect(a.shipment.id).toBe(b.shipment.id);
+    expect(ctx.service.list({})).toHaveLength(1);
+  });
+
+  it('rejects a batch with events from another carrier, storing none of it', async () => {
+    await setup();
+    provider.events = [ev({ raw_status: 'ENTREGUE', carrier: 'loggi', occurred_at: at(5) })];
+    await expect(ctx.service.refresh(id)).rejects.toMatchObject({ kind: 'invalid_response' });
+    expect(ctx.service.get(id)).toMatchObject({ status: 'unknown', history: [] });
+  });
+});
+
 describe('status and history', () => {
   beforeEach(() => setup());
 
@@ -214,6 +235,18 @@ describe('delay', () => {
     provider.events = [posted(0), delivered(10)];
     await ctx.service.refresh(id);
     expect(await ctx.service.scan()).toEqual({ checked: 0, failed: 0 });
+  });
+
+  it('scan keeps polling a delivery whose start never arrived, and the delay appears when it does', async () => {
+    provider.events = [delivered(121)];
+    ctx.clock.set(at(130));
+    await ctx.service.refresh(id);
+    expect(ctx.service.get(id).delay.late).toBe(false);
+
+    provider.events = [delivered(121), posted(0)];
+    expect(await ctx.service.scan()).toEqual({ checked: 1, failed: 0 });
+    expect(ctx.service.get(id).delay).toMatchObject({ late: true, elapsed_hours: 121 });
+    expect(ctx.alerts).toHaveLength(1);
   });
 
   it('honours a per-carrier limit', async () => {

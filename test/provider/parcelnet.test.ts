@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ParcelNetClient } from '../../src/provider/parcelnet/client.ts';
+import { mapParcelNet, ParcelNetClient } from '../../src/provider/parcelnet/client.ts';
 import { ShipmentService } from '../../src/service.ts';
 import { Repository } from '../../src/repository.ts';
 import { openDb } from '../../src/db.ts';
@@ -31,5 +31,18 @@ describe('second adapter (ParcelNet)', () => {
     expect(refresh).toEqual({ fetched: 2, inserted: 2, duplicates: 0 });
     expect(after.status).toBe('delivered');
     expect(after.delivered_at).toBe('2026-03-03T12:00:00.000Z');
+  });
+
+  it('rejects malformed events instead of coercing them', () => {
+    const wrap = (events: unknown[]) => ({ parcel: CODE, carrier_slug: 'correios', events });
+    expect(() => mapParcelNet(wrap([null]))).toThrow(/not an object/);
+    expect(() => mapParcelNet(wrap([{ carrier_code: 'PO', epoch: null }]))).toThrow(/epoch/);
+    expect(() => mapParcelNet(wrap([{ carrier_code: 'BDE', carrier_subcode: ['01'], epoch: 1 }]))).toThrow(/subcode/);
+    expect(() => mapParcelNet({ parcel: CODE })).toThrow(/expected/);
+  });
+
+  it('rejects an answer that belongs to another code', async () => {
+    const provider = new ParcelNetClient({ baseUrl: 'http://x', apiKey: 'k', fetch: async () => Response.json({ ...payload, parcel: 'BB123456789BR' }) });
+    await expect(provider.fetchEvents(CODE)).rejects.toMatchObject({ kind: 'invalid_response' });
   });
 });

@@ -18,7 +18,6 @@ export const STATUS_LABELS: Record<Status, string> = {
   unknown: 'desconhecido',
 };
 
-// What every provider adapter must produce. Nothing aggregator-specific lives here.
 export interface CarrierEvent {
   external_id?: string;
   carrier: string;

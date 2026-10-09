@@ -159,6 +159,13 @@ describe('webhook', () => {
     expect((await post('/webhooks/aggregator', { nope: true }, hook)).status).toBe(400);
   });
 
+  it('rejects a push whose carrier does not match the registered one', async () => {
+    const { body } = await register();
+    const wrong = { tracking: { number: CODE, carrier: 'loggi' }, checkpoints: [cp('ENTREGUE', 5)] };
+    expect((await post('/webhooks/aggregator', wrong, hook)).status).toBe(400);
+    expect((await json(await ctx.app.request(`/shipments/${body.id}`))).status).toBe('unknown');
+  });
+
   it('is not mounted without a token configured', async () => {
     const off = makeApp(new RastroHubClient({ baseUrl: agg.baseUrl, apiKey: agg.apiKey }), { env: {} });
     const res = await off.app.request('/webhooks/aggregator', { method: 'POST', body: '{}' });

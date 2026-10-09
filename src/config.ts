@@ -5,7 +5,7 @@ export interface DomainConfig {
 }
 
 export interface ProviderConfig {
-  kind: 'rastrohub' | 'parcelnet';
+  kind: string;
   baseUrl: string;
   apiKey: string;
   timeoutMs: number;
@@ -38,14 +38,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const prefix = 'MAX_TRANSIT_HOURS_';
   const carrierMaxTransitHours: Record<string, number> = {};
   for (const key of Object.keys(env)) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(prefix) && key.length > prefix.length && env[key] !== '') {
       carrierMaxTransitHours[key.slice(prefix.length).toLowerCase()] = num(env, key, 0, { min: 0.001 });
     }
-  }
-
-  const kind = env.PROVIDER ?? 'rastrohub';
-  if (kind !== 'rastrohub' && kind !== 'parcelnet') {
-    throw new Error(`PROVIDER must be rastrohub or parcelnet, got "${kind}"`);
   }
 
   return {
@@ -57,7 +52,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     pollIntervalMs: num(env, 'POLL_INTERVAL_MS', 900_000, { min: 0 }),
     webhookToken: env.WEBHOOK_TOKEN || null,
     provider: {
-      kind,
+      kind: env.PROVIDER || 'rastrohub',
       baseUrl: env.AGGREGATOR_URL ?? 'http://localhost:4001',
       apiKey: env.AGGREGATOR_API_KEY ?? 'dev-key',
       timeoutMs: num(env, 'AGGREGATOR_TIMEOUT_MS', 5000, { min: 1 }),
