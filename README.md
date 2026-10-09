@@ -190,7 +190,7 @@ src/http/app.ts      rotas Hono
 
 ## Uso de IA
 
-O código e os testes foram escritos com um assistente de IA (Claude), que eu dirigi. Eu revisei e ajustei:
+Usei mais de um modelo de IA, cada um num papel: Claude Opus 5.5 para planejar, dividir o trabalho e conferir as entregas; Claude Sonnet 5.5 para escrever o código e os testes; e GPT-6.1 Sol para uma revisão independente contra o enunciado, cujos achados válidos entraram como correção. Eu dirigi o processo e revisei o resultado. Eu revisei e ajustei:
 
 - A tabela de Correios: `BDE`, `BDI` e `BDR` só viram entregue com subcódigo `01`. Subcódigos de "destinatário ausente" viram exceção e `BDE` solto vira `unknown`.
 - O parse de data do agregador: confirmei que `Date.parse("2026-02-31T10:00:00Z")` rola para março em vez de falhar, e por isso a validação do calendário e a recusa de horário sem offset ficam em `src/provider/time.ts`.
