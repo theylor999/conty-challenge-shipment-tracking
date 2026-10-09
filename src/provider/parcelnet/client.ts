@@ -22,7 +22,7 @@ export function mapParcelNet(payload: ParcelNetPayload): CarrierEvent[] {
     throw new ProviderError('invalid_response', 'parcelnet: unexpected payload');
   }
   return payload.events.map((e) => {
-    if (typeof e.carrier_code !== 'string' || !Number.isFinite(e.epoch)) {
+    if (typeof e.carrier_code !== 'string' || !Number.isFinite(new Date(e.epoch * 1000).getTime())) {
       throw new ProviderError('invalid_response', 'parcelnet: event without code or epoch');
     }
     return {
